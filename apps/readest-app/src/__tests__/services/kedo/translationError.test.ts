@@ -14,6 +14,7 @@ it('detects a long English response that was returned without translation', asyn
       'This is a long English sentence with several words.',
     ),
   ).toThrow();
+  expect(() => assertChineseTranslation('Hello world', 'Hello world')).toThrow();
   expect(() => assertChineseTranslation('Alice', 'Alice')).not.toThrow();
   expect(() =>
     assertChineseTranslation(

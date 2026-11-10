@@ -12,7 +12,7 @@ export function translationError(error: unknown): string {
 
 export function assertChineseTranslation(source: string, result: string): void {
   const words = source.match(/[A-Za-z]+/g) || [];
-  if (words.length >= 6 && !/[\u3400-\u9fff]/.test(result)) {
+  if (words.length >= 2 && !/[\u3400-\u9fff]/.test(result)) {
     throw new Error('翻译结果未包含中文，请检查所选服务和目标语言。');
   }
 }
