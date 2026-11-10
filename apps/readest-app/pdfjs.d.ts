@@ -8,4 +8,3 @@
 // Only the side effect matters: `document.ts` awaits this import to install
 // pdf.js, and foliate-js drives it from plain JavaScript.
 declare module '@pdfjs/pdf.min.mjs';
-declare module '@pdfjs/pdf.worker.min.mjs';

@@ -33,6 +33,7 @@ function syntheticPdf(): Uint8Array {
 }
 
 it('extracts text from a real synthetic PDF without changing its input', async () => {
+  // @ts-expect-error the PDF.js worker has no type declarations
   const worker = await import('@pdfjs/pdf.worker.min.mjs');
   (globalThis as Record<string, unknown>)['pdfjsWorker'] = worker;
   const bytes = syntheticPdf();
