@@ -120,6 +120,7 @@ export async function extractPdfPages(
   try {
     const pdf = await task.promise;
     const pages: string[] = [];
+    progress(0, pdf.numPages);
     for (let i = 1; i <= pdf.numPages; i++) {
       signal.throwIfAborted();
       const page = await pdf.getPage(i);

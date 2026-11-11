@@ -45,7 +45,7 @@ it('extracts text from a real synthetic PDF without changing its input', async (
   );
   expect(pages).toHaveLength(1);
   expect(pages[0]).toContain('small English book');
-  expect(progress).toEqual([1]);
+  expect(progress).toEqual([0, 1]);
   const server = createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(
