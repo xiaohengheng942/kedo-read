@@ -18,13 +18,24 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
   const [status, setStatus] = useState('');
   const [output, setOutput] = useState<File | null>(null);
   const abort = useRef<AbortController | null>(null);
+  const requestId = useRef(0);
   const translators = getTranslators().filter((p) => !p.disabled && !p.authRequired);
   useEffect(() => {
-    if (!isOpen) abort.current?.abort();
+    if (!isOpen) {
+      requestId.current++;
+      abort.current?.abort();
+      abort.current = null;
+      setFile(null);
+      setOutput(null);
+      setStatus('');
+      setBusy(false);
+      setMode('auto');
+    }
   }, [isOpen]);
   const run = async () => {
     if (!file) return;
     const controller = new AbortController();
+    const id = ++requestId.current;
     abort.current = controller;
     setBusy(true);
     setOutput(null);
@@ -48,9 +59,9 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
       };
       let bytes: Uint8Array;
       if (/\.pdf$/i.test(file.name)) {
-        const pages = await extractPdfPages(file, controller.signal, (n, total) =>
-          setStatus(`提取文字：${n}/${total} 页`),
-        );
+        const pages = await extractPdfPages(file, controller.signal, (n, total) => {
+          if (requestId.current === id) setStatus(`提取文字：${n}/${total} 页`);
+        });
         const shouldTranslate =
           mode === 'translate' ||
           (mode === 'auto' && isPrimarilyEnglish(pages.join(' ').slice(0, 10000)));
@@ -61,7 +72,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
             for (const segment of segments)
               if (segment.trim()) translated.push(await translate(segment, controller.signal));
             pages[i] = translated.join('\n');
-            setStatus(`翻译：${i + 1}/${pages.length} 页`);
+            if (requestId.current === id) setStatus(`翻译：${i + 1}/${pages.length} 页`);
           }
         }
         bytes = new Uint8Array(
@@ -78,10 +89,13 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           throw new Error('EPUB 已经是 EPUB 格式，请选择翻译或直接导入原文件。');
         bytes = await translateEpub(new Uint8Array(await file.arrayBuffer()), translate, {
           signal: controller.signal,
-          onProgress: (n, total) => setStatus(`翻译：${n}/${total} 段`),
+          onProgress: (n, total) => {
+            if (requestId.current === id) setStatus(`翻译：${n}/${total} 段`);
+          },
         });
       }
       controller.signal.throwIfAborted();
+      if (requestId.current !== id) return;
       const buffer = new Uint8Array(bytes).buffer;
       setOutput(
         new File([buffer], `${file.name.replace(/\.(pdf|epub)$/i, '')}-Kedo.epub`, {
@@ -90,14 +104,17 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
       );
       setStatus('转换完成。可导入书库或导出。');
     } catch (e) {
-      setStatus(
-        controller.signal.aborted
-          ? '任务已取消。'
-          : `转换失败：${e instanceof Error ? e.message : String(e)}`,
-      );
+      if (requestId.current === id)
+        setStatus(
+          controller.signal.aborted
+            ? '任务已取消。'
+            : `转换失败：${e instanceof Error ? e.message : String(e)}`,
+        );
     } finally {
-      setBusy(false);
-      abort.current = null;
+      if (requestId.current === id) {
+        setBusy(false);
+        abort.current = null;
+      }
     }
   };
   return (
