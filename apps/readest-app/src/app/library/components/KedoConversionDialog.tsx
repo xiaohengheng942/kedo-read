@@ -1,7 +1,8 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Dialog from '@/components/Dialog';
 import { useEnv } from '@/context/EnvContext';
+import { useSettingsStore } from '@/store/settingsStore';
 import { getTranslators } from '@/services/translators';
 import { extractPdfPages, isPrimarilyEnglish, pagesToEpub } from '@/services/kedo/pdfToEpub';
 import { translateEpub } from '@/services/kedo/translateEpub';
@@ -13,7 +14,9 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
   const { appService } = useEnv();
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<'auto' | 'translate' | 'original'>('auto');
+  const currentProvider = useSettingsStore((s) => s.settings.globalReadSettings?.translationProvider);
   const [provider, setProvider] = useState('');
+  const fileInputId = useId();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [output, setOutput] = useState<File | null>(null);
@@ -21,6 +24,9 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
   const requestId = useRef(0);
   const translators = getTranslators().filter((p) => !p.disabled && !p.authRequired);
   useEffect(() => {
+    if (isOpen) {
+      setProvider(['azure', 'google', 'yandex'].includes(currentProvider || '') ? currentProvider! : 'google');
+    }
     if (!isOpen) {
       requestId.current++;
       abort.current?.abort();
@@ -31,7 +37,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
       setBusy(false);
       setMode('auto');
     }
-  }, [isOpen]);
+  }, [isOpen, currentProvider]);
   const run = async () => {
     if (!file) return;
     const controller = new AbortController();
@@ -60,7 +66,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
       let bytes: Uint8Array;
       if (/\.pdf$/i.test(file.name)) {
         const pages = await extractPdfPages(file, controller.signal, (n, total) => {
-          if (requestId.current === id) setStatus(`提取文字：${n}/${total} 页`);
+          if (requestId.current === id) setStatus(`提取文字与识别：${n}/${total} 页`);
         });
         const shouldTranslate =
           mode === 'translate' ||
@@ -127,14 +133,22 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
       title='转换或翻译书籍'
     >
       <div className='flex flex-col gap-3 p-4'>
+        <label htmlFor={fileInputId} className='btn btn-primary w-full cursor-pointer'>
+          {file ? '重新选择 PDF 或 EPUB 文件' : '选择 PDF 或 EPUB 文件'}
+        </label>
+        {file && <p className='break-all text-sm' aria-live='polite'>已选择：{file.name}</p>}
         <input
+          id={fileInputId}
+          aria-label='选择 PDF 或 EPUB 文件'
+          className='sr-only focus:not-sr-only'
           type='file'
-          accept='.pdf,.epub,application/pdf,application/epub+zip'
           disabled={busy}
           onChange={(e) => {
-            setFile(e.target.files?.[0] || null);
+            const selected = e.target.files?.[0] || null;
+            const valid = !selected || /\.(pdf|epub)$/i.test(selected.name);
+            setFile(valid ? selected : null);
             setOutput(null);
-            setStatus('');
+            setStatus(valid ? '' : '请选择 PDF 或 EPUB 文件。');
           }}
         />
         <label>
@@ -167,7 +181,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           </select>
         </label>
         <p>在线翻译会将书籍内容发送给所选服务，可能产生费用。可在设置中配置自定义翻译服务。</p>
-        <p>PDF 转换仅提取文字；复杂排版和图片可能丢失，扫描件暂不支持 OCR。</p>
+        <p>PDF 扫描页使用本机文字识别；复杂排版、图片、表格和公式可能丢失。</p>
         {status && <p role='status'>{status}</p>}
         <div className='flex flex-wrap gap-2'>
           <button className='btn btn-primary' disabled={!file || busy} onClick={() => void run()}>

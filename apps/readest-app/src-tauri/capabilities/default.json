@@ -2,7 +2,11 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "enables the default permissions",
-  "windows": ["main", "updater", "reader-*"],
+  "windows": [
+    "main",
+    "updater",
+    "reader-*"
+  ],
   "permissions": [
     "core:default",
     "fs:default",
@@ -263,6 +267,7 @@
     "allow-localsend-respond",
     "allow-localsend-cancel-receive",
     "allow-localsend-send-files",
-    "allow-localsend-cancel-send"
+    "allow-localsend-cancel-send",
+    "allow-kedo-ocr"
   ]
 }

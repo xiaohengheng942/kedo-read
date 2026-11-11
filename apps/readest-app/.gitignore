@@ -43,6 +43,7 @@ Entitlements*.plist
 tauri.*.conf.json
 # tracked exception: the direct-distribution iCloud overlay ships in the repo
 !tauri.macos-nonestore.conf.json
+!tauri.kedo.conf.json
 
 # vercel
 .vercel
@@ -94,3 +95,5 @@ docs/superpowers
 # Word Lens build-input corpora (ECDICT, WikDict, FrequencyWords, etc.) — large,
 # downloaded on demand by scripts/build-wordlens-data.mjs; cached locally, not committed.
 /data/wordlens/.sources/
+
+/public/vendor/kedo-wordlens/

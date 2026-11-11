@@ -85,6 +85,22 @@ describe('glossPacks', () => {
     vi.resetModules();
   });
 
+  it('loads the bundled English-Chinese pack without a network download', async () => {
+    const { appService, store } = createFakeAppService();
+    const bytes = packBytes();
+    const pack = makePack({}, await sha256Hex(bytes));
+    const fetchStub = vi.fn(async () => ({ ok: true, arrayBuffer: async () => bytes }));
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const { ensurePack } = await importGlossPacks();
+      expect(await ensurePack(appService, pack, { allowDownload: false })).toBe('wordlens/en-zh.json');
+      expect(fetchStub).toHaveBeenCalledWith('/vendor/kedo-wordlens/en-zh.json');
+      expect(store.has('Data:wordlens/en-zh.json')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   describe('downloadViaTempFile', () => {
     // Fake AppService where the temp file lives at an ABSOLUTE path. The bug
     // was: download wrote to a CWD-relative path while the read resolved against

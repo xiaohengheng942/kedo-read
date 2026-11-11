@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { strToU8, zipSync } from 'fflate';
 import KedoConversionDialog from '@/app/library/components/KedoConversionDialog';
+vi.mock('@/store/settingsStore', () => ({ useSettingsStore: (selector: (s: unknown) => unknown) => selector({ settings: { globalReadSettings: { translationProvider: 'azure' } } }) }));
 const { translateMock } = vi.hoisted(() => ({ translateMock: vi.fn(async () => ['你好世界']) }));
 vi.mock('@/components/Dialog', () => ({
   default: ({ isOpen, children }: { isOpen: boolean; children: React.ReactNode }) =>
@@ -9,7 +10,7 @@ vi.mock('@/components/Dialog', () => ({
 }));
 vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { saveFile: vi.fn() } }) }));
 vi.mock('@/services/translators', () => ({
-  getTranslators: () => [{ name: 'test', label: '测试服务', translate: translateMock }],
+  getTranslators: () => [{ name: 'azure', label: 'Azure Translator', translate: translateMock }, { name: 'google', label: 'Google Translate', translate: translateMock }, { name: 'yandex', label: 'Yandex Translate', translate: translateMock }, { name: 'test', label: '测试服务', translate: translateMock }],
 }));
 
 describe('book conversion dialog', () => {
@@ -30,6 +31,8 @@ describe('book conversion dialog', () => {
     const { container, rerender } = render(
       <KedoConversionDialog isOpen onClose={() => {}} onImport={onImport} />,
     );
+    expect(screen.getByLabelText('选择 PDF 或 EPUB 文件')).toBeTruthy();
+    expect((screen.getByLabelText('翻译服务') as HTMLSelectElement).value).toBe('azure');
     fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: [file] } });
     fireEvent.change(screen.getByLabelText('翻译服务'), { target: { value: 'test' } });
     fireEvent.click(screen.getByText('开始'));

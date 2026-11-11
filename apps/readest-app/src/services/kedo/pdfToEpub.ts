@@ -1,5 +1,6 @@
 import { buildEpub } from '@/services/send/conversion/buildEpub';
 import { franc } from 'franc-min';
+import { invoke } from '@tauri-apps/api/core';
 
 export function isPrimarilyEnglish(text: string): boolean {
   return franc(text.slice(0, 10000)) === 'eng';
@@ -17,9 +18,21 @@ export function pdfResourceOptions(base: string) {
 }
 
 function validatePages(pages: string[]): void {
-  if (!pages.length || pages.some((page) => !page.trim())) {
-    throw new Error('PDF 包含没有文字层的页面（可能是扫描页或空白页）；当前未配置 OCR。');
+  if (!pages.some((page) => page.trim())) {
+    throw new Error('PDF 没有可识别的文字（包括 OCR 结果），无法生成 EPUB。');
   }
+}
+
+export async function resolvePageText(
+  extracted: string,
+  isBlank: () => Promise<boolean>,
+  ocr: () => Promise<string>,
+): Promise<string> {
+  if (extracted.trim()) return extracted;
+  if (await isBlank()) return '';
+  const recognized = (await ocr()).trim();
+  if (!recognized) throw new Error('OCR 未能识别此页面的文字。');
+  return recognized;
 }
 
 type PdfTextItem = { str?: string; hasEOL?: boolean };
@@ -81,6 +94,8 @@ export async function extractPdfPages(
             numPages: number;
             getPage: (n: number) => Promise<{
               streamTextContent: () => PdfTextStream;
+              getViewport: (options: { scale: number }) => { width: number; height: number };
+              render: (options: { canvas: HTMLCanvasElement; canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number }; background: string }) => { promise: Promise<void>; cancel: () => void };
             }>;
             destroy: () => Promise<void>;
           }>;
@@ -108,7 +123,48 @@ export async function extractPdfPages(
     for (let i = 1; i <= pdf.numPages; i++) {
       signal.throwIfAborted();
       const page = await pdf.getPage(i);
-      pages.push(await readPdfTextStream(page.streamTextContent(), signal));
+      const extracted = await readPdfTextStream(page.streamTextContent(), signal);
+      let canvas: HTMLCanvasElement | undefined;
+      const renderPage = async () => {
+        if (canvas) return canvas;
+        const viewport = page.getViewport({ scale: 2 });
+        if (viewport.width * viewport.height > 30_000_000) throw new Error(`第 ${i} 页尺寸过大，无法识别。`);
+        const image = document.createElement('canvas');
+        image.width = Math.ceil(viewport.width);
+        image.height = Math.ceil(viewport.height);
+        const context = image.getContext('2d', { willReadFrequently: true });
+        if (!context) throw new Error('无法创建页面识别图像。');
+        const rendering = page.render({ canvas: image, canvasContext: context, viewport, background: 'white' });
+        const cancelRender = () => rendering.cancel();
+        signal.addEventListener('abort', cancelRender, { once: true });
+        try { await rendering.promise; } finally { signal.removeEventListener('abort', cancelRender); }
+        signal.throwIfAborted();
+        canvas = image;
+        return image;
+      };
+      pages.push(await resolvePageText(extracted, async () => {
+        const image = await renderPage();
+        const pixels = image.getContext('2d')!.getImageData(0, 0, image.width, image.height).data;
+        let dark = 0;
+        for (let p = 0; p < pixels.length; p += 4) {
+          if (pixels[p]! < 235 || pixels[p + 1]! < 235 || pixels[p + 2]! < 235) dark++;
+          if (dark > 5) return false;
+        }
+        return true;
+      }, async () => {
+        const image = await renderPage();
+        const blob = await new Promise<Blob | null>((resolve) => image.toBlob(resolve, 'image/png'));
+        if (!blob) throw new Error(`无法生成第 ${i} 页识别图像。`);
+        signal.throwIfAborted();
+        try {
+          const text = await invoke<string>('kedo_ocr', { image: Array.from(new Uint8Array(await blob.arrayBuffer())) });
+          signal.throwIfAborted();
+          return text;
+        } catch (error) {
+          signal.throwIfAborted();
+          throw new Error(`第 ${i} 页无法完成本地文字识别：${String(error)}`);
+        }
+      }));
       progress(i, pdf.numPages);
     }
     signal.throwIfAborted();

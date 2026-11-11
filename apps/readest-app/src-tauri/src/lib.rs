@@ -41,6 +41,8 @@ mod file_reveal;
 mod linux_display;
 #[cfg(all(target_os = "linux", any(feature = "cef", test)))]
 mod linux_single_instance;
+#[cfg(target_os = "macos")]
+mod kedo_ocr;
 mod localsend;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -659,6 +661,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_oauth::init())
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")]
+            kedo_ocr::kedo_ocr,
             start_server,
             download_file,
             upload_file,

@@ -148,6 +148,13 @@ export const fetchManifest = async (
   const download = getDownloader(appService, opts?.download);
   manifestPromise = (async () => {
     try {
+      // Kedo ships the English-Chinese pack and manifest for offline use.
+      if (!opts?.download && typeof window !== 'undefined') {
+        try {
+          const response = await fetch('/vendor/kedo-wordlens/manifest.json');
+          if (response.ok) return (await response.json()) as WordLensManifest;
+        } catch { /* Other builds may not bundle the pack. */ }
+      }
       const bytes = await download(`${WORDLENS_CDN_BASE}/${MANIFEST_FILE}`);
       const text = new TextDecoder().decode(bytes);
       const manifest = JSON.parse(text) as WordLensManifest;
@@ -177,6 +184,22 @@ const ensurePackUncached = async (
   if ((await appService.exists(dst, 'Data')) && (await appService.exists(sidecar, 'Data'))) {
     const recorded = (await appService.readFile(sidecar, 'Data', 'text')) as string;
     if (recorded === pack.sha256) return dst;
+  }
+
+  // The bundled English-Chinese data is available without contacting a server.
+  if (pack.pair === 'en-zh' && !opts?.download && typeof window !== 'undefined') {
+    try {
+      const response = await fetch('/vendor/kedo-wordlens/en-zh.json');
+      if (response.ok) {
+        const bytes = await response.arrayBuffer();
+        if (await sha256OfBytes(bytes) === pack.sha256) {
+          await ensureStoreDir(appService);
+          await appService.writeFile(dst, 'Data', new TextDecoder().decode(bytes));
+          await appService.writeFile(sidecar, 'Data', pack.sha256);
+          return dst;
+        }
+      }
+    } catch { /* Fall back to the configured online download. */ }
   }
 
   // Reader path with auto-download off: never hit the network for an uncached

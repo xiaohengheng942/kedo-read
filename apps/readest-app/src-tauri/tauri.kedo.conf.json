@@ -1,0 +1,22 @@
+{
+  "productName": "Kedo",
+  "identifier": "app.kedo.reader",
+  "build": {
+    "beforeBuildCommand": "bash scripts/build-kedo-ocr.sh && NEXT_PUBLIC_DISABLE_UPDATER=1 pnpm build"
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "resources": {
+      "kedo-resources/kedo-ocr": "kedo-ocr"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "kedo"
+        ]
+      }
+    }
+  }
+}

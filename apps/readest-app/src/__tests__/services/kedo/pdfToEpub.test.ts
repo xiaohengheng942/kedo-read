@@ -29,7 +29,7 @@ describe('PDF text conversion', () => {
   });
   it('rejects scanned or empty content', async () => {
     await expect(pagesToEpub(['', '  '], 'Empty')).rejects.toThrow(/文字层|OCR/);
-    await expect(pagesToEpub(['Readable page', ''], 'Mixed')).rejects.toThrow(/文字层|OCR/);
+    await expect(pagesToEpub(['Readable page', ''], 'Mixed')).resolves.toBeInstanceOf(Blob);
   });
 });
 
@@ -44,4 +44,13 @@ it('reads PDF text from a stream that has no async iterator', async () => {
     }),
   };
   expect(await readPdfTextStream(stream)).toBe('First\nSecond');
+});
+
+it('uses OCR only on nonblank pages without a text layer', async () => {
+  const { resolvePageText } = await import('@/services/kedo/pdfToEpub');
+  const ocr = async () => '识别出的文字';
+  expect(await resolvePageText('Existing text', async () => false, ocr)).toBe('Existing text');
+  expect(await resolvePageText('', async () => true, ocr)).toBe('');
+  expect(await resolvePageText('', async () => false, ocr)).toBe('识别出的文字');
+  await expect(resolvePageText('', async () => false, async () => '')).rejects.toThrow(/OCR/);
 });

@@ -7,4 +7,4 @@
 - [ebook-translator](https://github.com/mess/ebook-translator)：GPL-3.0，Java 11+，面向无 DRM EPUB 和 DeepL。额外 Java 运行时及单一服务配置增加集成负担；未引入。
 - [calibre](https://github.com/kovidgoyal/calibre)：GPL-3.0，支持 macOS 和多格式转换。该机器有 calibre，但其大型独立运行时及打包维护成本使其未被嵌入或作为 Kedo 的必备外部程序；没有验证其在本机的转换质量。
 
-当前实验使用 Readest 已有的 PDF.js、EPUB 构建器及自定义翻译器，以减少新增运行依赖。这一选择尚不能解决扫描件 OCR、PDF 图片和复杂排版恢复。没有使用或下载上述项目的 OCR 模型；若将来引入，需逐一核验模型许可和 Apple Silicon 运行条件。
+当前实验使用 Readest 已有的 PDF.js、EPUB 构建器及自定义翻译器，以减少新增运行依赖。扫描件可尝试 macOS Apple Vision 本地 OCR；图片和复杂排版恢复尚未解决。参考 macvision 的本地 Vision 思路，但没有引入其代码；Calibre 的 Ebook Translator 插件需要额外的 Calibre/Python 环境，未引入。没有使用或下载上述项目的 OCR 模型；若将来引入，需逐一核验模型许可和 Apple Silicon 运行条件。
