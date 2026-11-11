@@ -32,3 +32,16 @@ describe('PDF text conversion', () => {
     await expect(pagesToEpub(['Readable page', ''], 'Mixed')).rejects.toThrow(/文字层|OCR/);
   });
 });
+
+it('reads PDF text from a stream that has no async iterator', async () => {
+  const { readPdfTextStream } = await import('@/services/kedo/pdfToEpub');
+  const chunks = [{ items: [{ str: 'First', hasEOL: true }] }, { items: [{ str: 'Second' }] }];
+  const stream = {
+    getReader: () => ({
+      read: async () =>
+        chunks.length ? { done: false, value: chunks.shift()! } : { done: true, value: undefined },
+      releaseLock: () => {},
+    }),
+  };
+  expect(await readPdfTextStream(stream)).toBe('First\nSecond');
+});

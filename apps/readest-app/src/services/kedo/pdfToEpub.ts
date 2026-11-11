@@ -22,6 +22,35 @@ function validatePages(pages: string[]): void {
   }
 }
 
+type PdfTextItem = { str?: string; hasEOL?: boolean };
+type PdfTextStream = {
+  getReader: () => {
+    read: () => Promise<{ done: boolean; value?: { items: PdfTextItem[] } }>;
+    releaseLock: () => void;
+  };
+};
+
+/** WebKit versions without ReadableStream async iteration still support getReader(). */
+export async function readPdfTextStream(
+  stream: PdfTextStream,
+  signal?: AbortSignal,
+): Promise<string> {
+  const reader = stream.getReader();
+  const parts: string[] = [];
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || !Array.isArray(value.items)) throw new Error('PDF text stream is invalid');
+      for (const item of value.items) parts.push((item.str || '') + (item.hasEOL ? '\n' : ' '));
+    }
+    return parts.join('').trim();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function pagesToEpub(pages: string[], title: string, language = 'und'): Promise<Blob> {
   validatePages(pages);
   return buildEpub(
@@ -51,7 +80,7 @@ export async function extractPdfPages(
           promise: Promise<{
             numPages: number;
             getPage: (n: number) => Promise<{
-              getTextContent: () => Promise<{ items: Array<{ str?: string; hasEOL?: boolean }> }>;
+              streamTextContent: () => PdfTextStream;
             }>;
             destroy: () => Promise<void>;
           }>;
@@ -78,13 +107,8 @@ export async function extractPdfPages(
     const pages: string[] = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       signal.throwIfAborted();
-      const content = await (await pdf.getPage(i)).getTextContent();
-      pages.push(
-        content.items
-          .map((item) => (item.str || '') + (item.hasEOL ? '\n' : ' '))
-          .join('')
-          .trim(),
-      );
+      const page = await pdf.getPage(i);
+      pages.push(await readPdfTextStream(page.streamTextContent(), signal));
       progress(i, pdf.numPages);
     }
     signal.throwIfAborted();
