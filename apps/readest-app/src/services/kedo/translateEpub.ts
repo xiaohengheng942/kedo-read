@@ -1,6 +1,11 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 
-type Options = { signal?: AbortSignal; onProgress?: (done: number, total: number) => void };
+type Options = {
+  signal?: AbortSignal;
+  onProgress?: (done: number, total: number) => void;
+  completedSegments?: Record<number, string>;
+  onSegment?: (index: number, translation: string) => Promise<void>;
+};
 type Translate = (text: string, signal?: AbortSignal) => Promise<string>;
 
 function parseXml(bytes: Uint8Array, path: string): Document {
@@ -59,9 +64,11 @@ export async function translateEpub(
     check();
     const node = nodes[i]!;
     const original = node.data;
-    const result = await translate(original.trim(), options.signal);
+    const cached = options.completedSegments?.[i];
+    const result = cached ?? await translate(original.trim(), options.signal);
     check();
     if (!result?.trim()) throw new Error(`Empty translation response at segment ${i + 1}`);
+    if (cached === undefined) await options.onSegment?.(i, result);
     node.data = original.match(/^\s*/)?.[0] + result.trim() + original.match(/\s*$/)?.[0];
     options.onProgress?.(i + 1, nodes.length);
   }

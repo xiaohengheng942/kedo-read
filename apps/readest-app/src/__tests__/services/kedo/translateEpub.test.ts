@@ -51,3 +51,16 @@ describe('translateEpub', () => {
     ).rejects.toThrow();
   });
 });
+
+it('resumes completed segments and persists each newly translated segment', async () => {
+  const input = fixture();
+  const saved: Record<number, string> = { 0: '已保存' };
+  const calls: string[] = [];
+  const output = await translateEpub(input, async (text) => {
+    calls.push(text);
+    return '新译文';
+  }, { completedSegments: saved, onSegment: async (index, result) => { saved[index] = result; } });
+  expect(calls.length).toBeGreaterThan(0);
+  expect(Object.keys(saved).length).toBeGreaterThan(1);
+  expect(strFromU8(unzipSync(output)['OPS/chapter.xhtml']!)).toContain('新译文');
+});

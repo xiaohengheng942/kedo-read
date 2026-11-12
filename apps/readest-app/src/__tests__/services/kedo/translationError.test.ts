@@ -23,3 +23,13 @@ it('detects a long English response that was returned without translation', asyn
     ),
   ).not.toThrow();
 });
+
+it('explains loss of connectivity instead of blaming configuration', () => {
+  expect(translationError(new Error('error sending request for url'), false)).toContain('网络已断开');
+});
+
+it('classifies native transport failures as connectivity problems without exposing URLs', () => {
+  const message = translationError(new Error('error sending request for url https://private.invalid'));
+  expect(message).toContain('无法连接');
+  expect(message).not.toContain('private.invalid');
+});

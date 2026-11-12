@@ -60,7 +60,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           return result[0];
         } catch (error) {
           if (signal?.aborted) throw error;
-          throw new Error(translationError(error));
+          throw new Error(translationError(error, navigator.onLine));
         }
       };
       let bytes: Uint8Array;
