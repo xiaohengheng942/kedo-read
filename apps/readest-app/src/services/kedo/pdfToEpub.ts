@@ -64,6 +64,10 @@ export async function readPdfTextStream(
   }
 }
 
+export function segmentPdfPage(page: string): string[] {
+  return (page.match(/[\s\S]{1,1800}/g) || []).filter(segment => segment.trim());
+}
+
 export async function pagesToEpub(pages: string[], title: string, language = 'und'): Promise<Blob> {
   validatePages(pages);
   return buildEpub(

@@ -4,12 +4,13 @@ import Dialog from '@/components/Dialog';
 import { useEnv } from '@/context/EnvContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { getTranslators } from '@/services/translators';
-import { extractPdfPages, isPrimarilyEnglish, pagesToEpub } from '@/services/kedo/pdfToEpub';
+import { extractPdfPages, isPrimarilyEnglish, pagesToEpub, segmentPdfPage } from '@/services/kedo/pdfToEpub';
 import { translateEpub } from '@/services/kedo/translateEpub';
 import { assertChineseTranslation, translationError } from '@/services/kedo/translationError';
 import { retryTranslation } from '@/services/kedo/retryTranslation';
 import { createIndexedTaskStore, createTask, runTask, type TranslationTask } from '@/services/kedo/resumableTask';
 import { exportTaskBackup, importTaskBackup } from '@/services/kedo/taskBackup';
+import { createPartialEpub } from '@/services/kedo/partialEpub';
 
 type Props = { isOpen: boolean; onClose: () => void; onImport: (file: File) => Promise<void> };
 export default function KedoConversionDialog({ isOpen, onClose, onImport }: Props) {
@@ -133,11 +134,10 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
             async (_source, perform, completed, save) => {
               let index = 0;
               const result: string[] = [];
-              const total = pdfPages.reduce((n, page) => n + (page.match(/[\s\S]{1,1800}/g) || []).filter(s => s.trim()).length, 0);
+              const total = pdfPages.reduce((n, page) => n + segmentPdfPage(page).length, 0);
               for (const page of pdfPages) {
                 const translated: string[] = [];
-                for (const segment of page.match(/[\s\S]{1,1800}/g) || []) {
-                  if (!segment.trim()) continue;
+                for (const segment of segmentPdfPage(page)) {
                   controller.signal.throwIfAborted();
                   let text = completed[index];
                   if (text === undefined) { text = await perform(segment); controller.signal.throwIfAborted(); await save(index, text); }
@@ -276,6 +276,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           }).catch(() => setStatus('无法恢复备份，请检查文件是否有效且本机没有其他任务。'));
           e.target.value = '';
         }} /></>}
+        {savedTask && savedTask.status !== 'completed' && Object.keys(savedTask.segments).length > 0 && <p>可导出已完成的译文；未翻译处会标记缺失。此 EPUB 并非完整译本，导出后仍可继续任务。</p>}
         {status && <p role='status'>{status}</p>}
         {switchDecision && <div role='alert'>
           <p>切换服务后，译文可能混用不同服务。请选择保留已译内容，或重新翻译整本书。</p>
@@ -295,7 +296,20 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           {savedTask && !busy && <button className='btn' onClick={() => {
             const backup = exportTaskBackup(savedTask);
             void appService?.saveFile('Kedo-任务备份.json', backup, { mimeType: 'application/json' }).then(ok => { if (ok) setStatus('任务备份已导出，请妥善保管。'); });
-          }}>导出任务备份</button>}
+          }}>导出任务备份（JSON）</button>}
+          {savedTask && savedTask.status !== 'completed' && !busy && Object.keys(savedTask.segments).length > 0 && <button className='btn' onClick={() => {
+            setBusy(true);
+            void (async () => {
+              try {
+                const { bytes, percent } = await createPartialEpub(savedTask);
+                const name = `${savedTask.filename.replace(/\.(pdf|epub)$/i, '')}_中文译本_未完成_${percent}%.epub`;
+                const ok = await appService?.saveFile(name, new Uint8Array(bytes).buffer, { mimeType: 'application/epub+zip' });
+                if (ok) setStatus('已导出未完成译本；原任务仍可继续。');
+              } catch (error) {
+                setStatus(`未完成译本导出失败：${error instanceof Error ? error.message : String(error)}`);
+              } finally { setBusy(false); }
+            })();
+          }}>导出已翻译内容（EPUB）</button>}
           {savedTask?.status === 'completed' && !busy && (
             <button className='btn' onClick={() => void taskStore.current.clear().then(() => { setSavedTask(null); setOutput(null); setFile(null); setStatus('请选择下一本书。'); }).catch(() => setStatus('无法清理已完成任务，请重试。'))}>开始处理下一本</button>
           )}

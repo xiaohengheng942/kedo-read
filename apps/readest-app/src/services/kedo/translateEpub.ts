@@ -5,6 +5,7 @@ type Options = {
   onProgress?: (done: number, total: number) => void;
   completedSegments?: Record<number, string>;
   onSegment?: (index: number, translation: string) => Promise<void>;
+  partial?: { onCount: (done: number, total: number) => void };
 };
 type Translate = (text: string, signal?: AbortSignal) => Promise<string>;
 
@@ -59,16 +60,19 @@ export async function translateEpub(
     }
   }
   if (!nodes.length) throw new Error('EPUB contains no translatable text');
+  const done = nodes.reduce((n, _node, index) => n + (options.completedSegments?.[index]?.trim() ? 1 : 0), 0);
+  if (options.partial && !done) throw new Error('尚无已完成的译文可导出。');
+  options.partial?.onCount(done, nodes.length);
   options.onProgress?.(0, nodes.length);
   for (let i = 0; i < nodes.length; i++) {
     check();
     const node = nodes[i]!;
     const original = node.data;
     const cached = options.completedSegments?.[i];
-    const result = cached ?? await translate(original.trim(), options.signal);
+    const result = cached ?? (options.partial ? '【此处内容尚未翻译】' : await translate(original.trim(), options.signal));
     check();
     if (!result?.trim()) throw new Error(`Empty translation response at segment ${i + 1}`);
-    if (cached === undefined) await options.onSegment?.(i, result);
+    if (cached === undefined && !options.partial) await options.onSegment?.(i, result);
     node.data = original.match(/^\s*/)?.[0] + result.trim() + original.match(/\s*$/)?.[0];
     options.onProgress?.(i + 1, nodes.length);
   }
@@ -78,6 +82,21 @@ export async function translateEpub(
     opf.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', 'language'),
   ))
     language.textContent = 'zh-CN';
+  if (options.partial) {
+    const percent = Math.min(99, Math.floor(done * 100 / nodes.length));
+    const title = opf.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', 'title')[0];
+    if (title) title.textContent = `中文译本（未完成 ${percent}%）`;
+    else {
+      const meta = opf.getElementsByTagNameNS('*', 'metadata')[0];
+      if (!meta) throw new Error('EPUB 缺少书籍信息。');
+      const element = opf.createElementNS('http://purl.org/dc/elements/1.1/', 'dc:title');
+      element.textContent = `中文译本（未完成 ${percent}%）`;
+      meta.appendChild(element);
+    }
+    for (const path of Object.keys(files)) {
+      if (/\.(?:xhtml|html|htm|ncx)$/i.test(path) && !contentPaths.includes(path)) delete files[path];
+    }
+  }
   files[opfPath] = strToU8(new XMLSerializer().serializeToString(opf));
   const output: Zippable = {};
   if (files['mimetype']) output['mimetype'] = [files['mimetype'], { level: 0 }];

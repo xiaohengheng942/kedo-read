@@ -2,9 +2,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { strToU8, zipSync } from 'fflate';
 import KedoConversionDialog from '@/app/library/components/KedoConversionDialog';
+const { saveMock } = vi.hoisted(() => ({ saveMock: vi.fn(async (_name: string, _data: ArrayBuffer, _options: object) => true) }));
 const taskMemory = vi.hoisted(() => ({ value: null as unknown }));
 const { extractMock } = vi.hoisted(() => ({ extractMock: vi.fn(async () => ['First page', 'Second page']) }));
-vi.mock('@/services/kedo/pdfToEpub', () => ({ extractPdfPages: extractMock, isPrimarilyEnglish: () => true, pagesToEpub: async () => ({ arrayBuffer: async () => new Uint8Array([1, 2]).buffer }) }));
+vi.mock('@/services/kedo/pdfToEpub', () => ({ extractPdfPages: extractMock, segmentPdfPage: (page: string) => page.trim() ? [page] : [], isPrimarilyEnglish: () => true, pagesToEpub: async () => ({ arrayBuffer: async () => new Uint8Array([1, 2]).buffer }) }));
 vi.mock('@/services/kedo/resumableTask', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/kedo/resumableTask')>();
   return { ...actual, createIndexedTaskStore: () => ({
@@ -19,7 +20,7 @@ vi.mock('@/components/Dialog', () => ({
   default: ({ isOpen, children }: { isOpen: boolean; children: React.ReactNode }) =>
     isOpen ? <div>{children}</div> : null,
 }));
-vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { saveFile: vi.fn() } }) }));
+vi.mock('@/context/EnvContext', () => ({ useEnv: () => ({ appService: { saveFile: saveMock } }) }));
 vi.mock('@/services/translators', () => ({
   getTranslators: () => [{ name: 'azure', label: 'Azure Translator', translate: translateMock }, { name: 'google', label: 'Google Translate', translate: translateMock }, { name: 'yandex', label: 'Yandex Translate', translate: translateMock }, { name: 'test', label: '测试服务', translate: translateMock }],
 }));
@@ -35,7 +36,7 @@ describe('book conversion dialog', () => {
         '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
       ),
       'book.opf': strToU8(
-        '<package><manifest><item href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest></package>',
+        '<package><metadata/><manifest><item href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest></package>',
       ),
       'chapter.xhtml': strToU8('<html><body><p>Hello world</p></body></html>'),
     });
@@ -68,7 +69,7 @@ describe('book conversion dialog', () => {
     const data = zipSync({
       mimetype: strToU8('application/epub+zip'),
       'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>'),
-      'book.opf': strToU8('<package><manifest><item href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest></package>'),
+      'book.opf': strToU8('<package><metadata/><manifest><item href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest></package>'),
       'chapter.xhtml': strToU8('<html><body><p>First paragraph</p><p>Second paragraph</p></body></html>'),
     });
     const file = new File([new Uint8Array(data).buffer], 'resume.epub');
@@ -83,6 +84,10 @@ describe('book conversion dialog', () => {
     release(['第二段']);
     await screen.findByText('任务已暂停；已完成的分段保存在本机。');
     expect(screen.queryByText('导出 EPUB')).toBeNull();
+    saveMock.mockClear();
+    fireEvent.click(screen.getByText('导出已翻译内容（EPUB）'));
+    await waitFor(() => expect(saveMock).toHaveBeenCalledOnce());
+    expect((taskMemory.value as {status:string}).status).toBe('paused');
     rerender(<KedoConversionDialog isOpen={false} {...props} />);
     rerender(<KedoConversionDialog isOpen {...props} />);
     await screen.findByText(/1 段已保存/);
@@ -141,6 +146,25 @@ describe('book conversion dialog', () => {
     expect(screen.getByText('保留已译内容并继续')).toBeTruthy();
     expect(screen.getByText('重新翻译整本书')).toBeTruthy();
     expect((taskMemory.value as {segments: Record<number,string>}).segments[0]).toBe('中文');
+  });
+
+  it('offers an EPUB of the finished segments without deleting the paused task', async () => {
+    const source = zipSync({
+      mimetype: strToU8('application/epub+zip'),
+      'META-INF/container.xml': strToU8('<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>'),
+      'book.opf': strToU8('<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>Old</dc:title></metadata><manifest><item href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest></package>'),
+      'chapter.xhtml': strToU8('<html><body><p>Hello world</p><p>Another part</p></body></html>'),
+    });
+    taskMemory.value = { version:1, filename:'book.epub', source, provider:'azure', segments:{0:'你好'}, status:'paused' };
+    saveMock.mockClear();
+    render(<KedoConversionDialog isOpen onClose={() => {}} onImport={vi.fn()} />);
+    await screen.findByText(/1 段已保存/);
+    expect(screen.getByText('导出任务备份（JSON）')).toBeTruthy();
+    fireEvent.click(screen.getByText('导出已翻译内容（EPUB）'));
+    await waitFor(() => expect(saveMock).toHaveBeenCalledOnce());
+    expect(saveMock.mock.calls[0]![0]).toContain('未完成_50%');
+    expect((taskMemory.value as {status:string}).status).toBe('paused');
+    expect(screen.getByText('继续任务')).toBeTruthy();
   });
 
 });
