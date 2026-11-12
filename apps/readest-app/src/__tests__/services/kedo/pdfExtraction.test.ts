@@ -91,3 +91,17 @@ it('extracts text from a real synthetic PDF without changing its input', async (
     server.close();
   }
 }, 15000);
+
+
+it('uses the saved text for an already recognized PDF page', async () => {
+  // @ts-expect-error PDF.js worker has no declaration file
+  const worker = await import('@pdfjs/pdf.worker.min.mjs');
+  (globalThis as Record<string, unknown>)['pdfjsWorker'] = worker;
+  const bytes = syntheticPdf();
+  const file = new File([new Uint8Array(bytes).buffer], 'sample.pdf');
+  Object.defineProperty(file, 'arrayBuffer', { value: async () => new Uint8Array(bytes).buffer });
+  const onPage = vi.fn(async () => {});
+  const pages = await extractPdfPages(file, new AbortController().signal, () => {}, { pages: ['此前识别的页面'], onPage });
+  expect(pages).toEqual(['此前识别的页面']);
+  expect(onPage).not.toHaveBeenCalled();
+});

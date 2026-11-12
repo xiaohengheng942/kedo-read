@@ -9,6 +9,7 @@ export type TranslationTask = {
   output?: Uint8Array;
   mode?: 'auto' | 'translate';
   pdfPages?: string[];
+  pdfComplete?: boolean;
 };
 export interface TaskStore {
   read(): Promise<TranslationTask | null>;

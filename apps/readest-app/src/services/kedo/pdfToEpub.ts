@@ -83,6 +83,7 @@ export async function extractPdfPages(
   file: File,
   signal: AbortSignal,
   progress: (done: number, total: number) => void,
+  checkpoint?: { pages: string[]; onPage: (index: number, text: string) => Promise<void> },
 ): Promise<string[]> {
   await import('@pdfjs/pdf.min.mjs');
   const pdfjs = (
@@ -123,6 +124,11 @@ export async function extractPdfPages(
     progress(0, pdf.numPages);
     for (let i = 1; i <= pdf.numPages; i++) {
       signal.throwIfAborted();
+      if (checkpoint && typeof checkpoint.pages[i - 1] === 'string') {
+        pages.push(checkpoint.pages[i - 1]!);
+        progress(i, pdf.numPages);
+        continue;
+      }
       const page = await pdf.getPage(i);
       const extracted = await readPdfTextStream(page.streamTextContent(), signal);
       let canvas: HTMLCanvasElement | undefined;
@@ -166,6 +172,7 @@ export async function extractPdfPages(
           throw new Error(`第 ${i} 页无法完成本地文字识别：${String(error)}`);
         }
       }));
+      if (checkpoint) await checkpoint.onPage(i - 1, pages[i - 1]!);
       progress(i, pdf.numPages);
     }
     signal.throwIfAborted();

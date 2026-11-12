@@ -1,6 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { getVocabularyStatus, setVocabularyStatus, type VocabularyStatus } from '@/services/kedo/vocabulary';
 
 import Popup from '@/components/Popup';
 import { Position } from '@/utils/sel';
@@ -40,6 +41,16 @@ const DictionaryPopup: React.FC<DictionaryPopupProps> = ({
   onManage,
 }) => {
   const state = useDictionaryResults({ word, lang, selection });
+  const [wordStatus, setWordStatus] = useState<VocabularyStatus | null>(null);
+  const [statusError, setStatusError] = useState(false);
+  useEffect(() => {
+    try { setWordStatus(getVocabularyStatus(state.currentWord)); setStatusError(false); }
+    catch { setWordStatus(null); setStatusError(true); }
+  }, [state.currentWord]);
+  const saveStatus = (status: VocabularyStatus) => {
+    try { setVocabularyStatus(state.currentWord, status); setWordStatus(status); setStatusError(false); }
+    catch { setStatusError(true); }
+  };
   return (
     <Popup
       width={popupWidth}
@@ -61,6 +72,11 @@ const DictionaryPopup: React.FC<DictionaryPopupProps> = ({
           onSpeak={state.speakWord}
           speaking={state.isSpeaking}
         />
+        <div className='flex gap-2 px-3 py-1' aria-label='词汇状态'>
+          <button className='btn btn-xs' aria-pressed={wordStatus === 'learning'} onClick={() => saveStatus('learning')}>学习中</button>
+          <button className='btn btn-xs' aria-pressed={wordStatus === 'mastered'} onClick={() => saveStatus('mastered')}>已掌握</button>
+          {statusError && <span role='status'>词汇状态保存失败</span>}
+        </div>
         <div className='min-h-0 flex-1'>
           <DictionaryResultsBody {...state} />
         </div>

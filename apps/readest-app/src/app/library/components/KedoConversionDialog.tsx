@@ -9,6 +9,7 @@ import { translateEpub } from '@/services/kedo/translateEpub';
 import { assertChineseTranslation, translationError } from '@/services/kedo/translationError';
 import { retryTranslation } from '@/services/kedo/retryTranslation';
 import { createIndexedTaskStore, createTask, runTask, type TranslationTask } from '@/services/kedo/resumableTask';
+import { exportTaskBackup, importTaskBackup } from '@/services/kedo/taskBackup';
 
 type Props = { isOpen: boolean; onClose: () => void; onImport: (file: File) => Promise<void> };
 export default function KedoConversionDialog({ isOpen, onClose, onImport }: Props) {
@@ -18,6 +19,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
   const currentProvider = useSettingsStore((s) => s.settings.globalReadSettings?.translationProvider);
   const [provider, setProvider] = useState('');
   const fileInputId = useId();
+  const backupInputId = useId();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [output, setOutput] = useState<File | null>(null);
@@ -26,6 +28,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
   const taskStore = useRef(createIndexedTaskStore());
   const [savedTask, setSavedTask] = useState<TranslationTask | null>(null);
   const [loadingTask, setLoadingTask] = useState(false);
+  const [switchDecision, setSwitchDecision] = useState(false);
   const running = useRef<Promise<void> | null>(null);
   const translators = getTranslators().filter((p) => !p.disabled && !p.authRequired);
   useEffect(() => {
@@ -41,6 +44,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
       setStatus('');
       setBusy(false);
       setMode('auto');
+      setSwitchDecision(false);
     }
   }, [isOpen, currentProvider]);
   useEffect(() => {
@@ -63,8 +67,15 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
     }).catch(() => { if (active) setStatus('无法读取本机任务，请检查存储空间和权限。'); }).finally(() => { if (active) setLoadingTask(false); });
     return () => { active = false; };
   }, [isOpen]);
-  const run = async () => {
+  const run = async (restartTranslation = false) => {
     if (!file) return;
+    if (savedTask && savedTask.provider !== provider && Object.keys(savedTask.segments).length && !switchDecision) { setSwitchDecision(true); return; }
+    if (restartTranslation && savedTask) {
+      const reset = { ...savedTask, provider, segments: {}, status: 'paused' as const };
+      await taskStore.current.write(reset);
+      setSavedTask(reset);
+    }
+    setSwitchDecision(false);
     const controller = new AbortController();
     const id = ++requestId.current;
     abort.current = controller;
@@ -94,17 +105,23 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
         if (mode !== 'original' && !task) {
           task = await createTask(taskStore.current, { filename: file.name, source: new Uint8Array(await file.arrayBuffer()), provider });
           task.mode = mode;
+          task.pdfPages = [];
+          task.pdfComplete = false;
           await taskStore.current.write(task);
           setSavedTask(task);
         }
         if (task && task.filename !== file.name) throw new Error('已有其他本机任务，请先完成或取消。');
+        if (task && !task.pdfPages) { task.pdfPages = []; task.pdfComplete = false; await taskStore.current.write(task); }
         let pages = task?.pdfPages;
-        if (!pages) {
+        if (!pages || task?.pdfComplete === false) {
           pages = await extractPdfPages(file, controller.signal, (n, total) => {
             if (requestId.current === id) setStatus(`提取文字与识别：${n}/${total} 页`);
-          });
+          }, task ? { pages: task.pdfPages ?? [], onPage: async (index, text) => {
+            task!.pdfPages![index] = text;
+            await taskStore.current.write(task!);
+          } } : undefined);
           controller.signal.throwIfAborted();
-          if (task) { task.pdfPages = pages; await taskStore.current.write(task); }
+          if (task) { task.pdfPages = pages; task.pdfComplete = true; await taskStore.current.write(task); }
         }
         const shouldTranslate = mode === 'translate' ||
           (mode === 'auto' && isPrimarilyEnglish(pages.join(' ').slice(0, 10000)));
@@ -245,10 +262,29 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           </select>
         </label>
         <p>在线翻译会将书籍内容发送给所选服务，可能产生费用。可在设置中配置自定义翻译服务。</p>
-        <p>翻译任务和已完成分段保存在本机；任务云同步尚未提供。扫描页使用本机文字识别，复杂排版和图片可能丢失。</p>
+        <p>翻译任务和已完成分段保存在本机；清理应用网页数据会删除任务。可导出任务备份到本机，备份包含书籍和译文，请妥善保管。任务云同步尚未提供。扫描页使用本机文字识别，复杂排版和图片可能丢失。</p>
+        {!savedTask && !busy && <><label htmlFor={backupInputId} className='btn'>恢复本机任务备份</label><input id={backupInputId} aria-label='恢复本机任务备份' className='sr-only focus:not-sr-only' type='file' accept='.json,application/json' onChange={(e) => {
+          const selected = e.target.files?.[0];
+          if (!selected) return;
+          void selected.text().then(importTaskBackup).then(async (task) => {
+            if (await taskStore.current.read()) throw new Error('已有任务，请先处理该任务。');
+            await taskStore.current.write(task);
+            setSavedTask(task); setFile(new File([new Uint8Array(task.source).buffer], task.filename)); setProvider(task.provider);
+            if (task.mode) setMode(task.mode);
+            if (task.status === 'completed' && task.output) setOutput(new File([new Uint8Array(task.output).buffer], `${task.filename.replace(/\.(pdf|epub)$/i, '')}-Kedo.epub`, { type: 'application/epub+zip' }));
+            setStatus('任务备份已恢复到本机。');
+          }).catch(() => setStatus('无法恢复备份，请检查文件是否有效且本机没有其他任务。'));
+          e.target.value = '';
+        }} /></>}
         {status && <p role='status'>{status}</p>}
+        {switchDecision && <div role='alert'>
+          <p>切换服务后，译文可能混用不同服务。请选择保留已译内容，或重新翻译整本书。</p>
+          <button className='btn' onClick={() => { const p = run(); running.current = p; void p.finally(() => { if (running.current === p) running.current = null; }); }}>保留已译内容并继续</button>
+          <button className='btn' onClick={() => { const p = run(true); running.current = p; void p.finally(() => { if (running.current === p) running.current = null; }); }}>重新翻译整本书</button>
+          <button className='btn' onClick={() => setSwitchDecision(false)}>返回</button>
+        </div>}
         <div className='flex flex-wrap gap-2'>
-          <button className='btn btn-primary' disabled={!file || busy || loadingTask || savedTask?.status === 'completed'} onClick={() => { const p = run(); running.current = p; void p.finally(() => { if (running.current === p) running.current = null; }); }}>
+          <button className='btn btn-primary' disabled={!file || busy || loadingTask || switchDecision || savedTask?.status === 'completed'} onClick={() => { const p = run(); running.current = p; void p.finally(() => { if (running.current === p) running.current = null; }); }}>
             {savedTask && savedTask.status !== 'completed' ? '继续任务' : '开始'}
           </button>
           {busy && (
@@ -256,7 +292,14 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
               暂停任务
             </button>
           )}
-          {savedTask && !busy && (
+          {savedTask && !busy && <button className='btn' onClick={() => {
+            const backup = exportTaskBackup(savedTask);
+            void appService?.saveFile('Kedo-任务备份.json', backup, { mimeType: 'application/json' }).then(ok => { if (ok) setStatus('任务备份已导出，请妥善保管。'); });
+          }}>导出任务备份</button>}
+          {savedTask?.status === 'completed' && !busy && (
+            <button className='btn' onClick={() => void taskStore.current.clear().then(() => { setSavedTask(null); setOutput(null); setFile(null); setStatus('请选择下一本书。'); }).catch(() => setStatus('无法清理已完成任务，请重试。'))}>开始处理下一本</button>
+          )}
+          {savedTask && savedTask.status !== 'completed' && !busy && (
             <button className='btn' onClick={() => void taskStore.current.clear().then(() => { setSavedTask(null); setOutput(null); setFile(null); setStatus('本机任务已取消。'); }).catch(() => setStatus('无法删除本机任务，请重试。'))}>取消并删除本机任务</button>
           )}
           {output && (

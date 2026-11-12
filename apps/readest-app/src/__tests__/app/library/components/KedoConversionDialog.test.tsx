@@ -90,8 +90,8 @@ describe('book conversion dialog', () => {
     await screen.findByText('导出 EPUB');
     expect(translateMock).toHaveBeenCalledTimes(3);
     expect(translateMock.mock.calls[2]![0]).toEqual(['Second paragraph']);
-    fireEvent.click(screen.getByText('取消并删除本机任务'));
-    await screen.findByText('本机任务已取消。');
+    fireEvent.click(screen.getByText('开始处理下一本'));
+    await screen.findByText('请选择下一本书。');
     expect(taskMemory.value).toBeNull();
   });
 
@@ -120,6 +120,27 @@ describe('book conversion dialog', () => {
     expect(extractMock).toHaveBeenCalledTimes(1);
     expect(translateMock).toHaveBeenCalledTimes(3);
     expect(translateMock.mock.calls[2]![0]).toEqual(['Second page']);
+  });
+
+  it('offers a fresh book after a completed task without requiring cancellation', async () => {
+    taskMemory.value = { version: 1, filename: 'done.epub', source: new Uint8Array([1]), provider: 'azure', segments: {0:'中文'}, status: 'completed', output: new Uint8Array([2]) };
+    render(<KedoConversionDialog isOpen onClose={() => {}} onImport={vi.fn()} />);
+    await screen.findByText('任务已完成，可加入书库或导出。');
+    fireEvent.click(screen.getByText('开始处理下一本'));
+    await waitFor(() => expect(taskMemory.value).toBeNull());
+    expect((screen.getByLabelText('选择 PDF 或 EPUB 文件') as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it('asks before mixing services or discarding translated segments', async () => {
+    taskMemory.value = { version: 1, filename: 'resume.epub', source: new Uint8Array([1]), provider: 'azure', segments: {0:'中文'}, status: 'paused' };
+    render(<KedoConversionDialog isOpen onClose={() => {}} onImport={vi.fn()} />);
+    await screen.findByText(/1 段已保存/);
+    fireEvent.change(screen.getByLabelText('翻译服务'), { target: { value: 'yandex' } });
+    fireEvent.click(screen.getByText('继续任务'));
+    expect(screen.getByText(/译文可能混用不同服务/)).toBeTruthy();
+    expect(screen.getByText('保留已译内容并继续')).toBeTruthy();
+    expect(screen.getByText('重新翻译整本书')).toBeTruthy();
+    expect((taskMemory.value as {segments: Record<number,string>}).segments[0]).toBe('中文');
   });
 
 });
