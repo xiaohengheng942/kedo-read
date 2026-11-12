@@ -1,6 +1,6 @@
 /** Convert provider errors to safe, actionable messages without exposing request data or credentials. */
 export function translationError(error: unknown, online = true): string {
-  if (!online) return '网络已断开，请联网后重试。';
+  if (!online) return '网络已断开，翻译任务已暂停；联网后可以继续。';
   const detail = error instanceof Error ? error.message : String(error);
   if (/\b429\b|rate.?limit/i.test(detail)) return '翻译服务已限流，请稍后重试或切换服务。';
   if (/\b(401|403)\b|unauthori[sz]ed|authentication|api.?key/i.test(detail))
