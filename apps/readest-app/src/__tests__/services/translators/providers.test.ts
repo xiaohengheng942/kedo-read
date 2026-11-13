@@ -1196,6 +1196,50 @@ describe('azureProvider', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it('can obtain authentication from a page stream before its later connection failure', async () => {
+    vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(BING_PAGE)); },
+      pull(controller) { controller.error(new Error('connection closed')); },
+    });
+    vi.mocked(tauriFetch)
+      .mockResolvedValueOnce({ ok: true, status: 200, body } as Response)
+      .mockResolvedValueOnce(translationBody('你好') as unknown as Response);
+    const { azureProvider } = await import('@/services/translators/providers/azure');
+    await expect(azureProvider.translate(['Hello'], 'en', 'zh-CN')).resolves.toEqual(['你好']);
+  });
+
+  it('rejects a valid JSON response without translated content', async () => {
+    vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    vi.mocked(tauriFetch)
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => BING_PAGE } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) } as Response);
+    const { azureProvider } = await import('@/services/translators/providers/azure');
+    await expect(azureProvider.translate(['Hello'], 'en', 'zh-CN')).rejects.toThrow(/malformed response/);
+  });
+
+  it('stops waiting for shared authentication when the task is paused', async () => {
+    vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    vi.mocked(tauriFetch).mockImplementationOnce(() => new Promise(() => {}));
+    const controller = new AbortController();
+    const { azureProvider } = await import('@/services/translators/providers/azure');
+    const pending = azureProvider.translate(['Hello'], 'en', 'zh-CN', null, false, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    expect(vi.mocked(tauriFetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes cancellation to the Bing translation request', async () => {
+    vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    vi.mocked(tauriFetch)
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => BING_PAGE } as Response)
+      .mockResolvedValueOnce(translationBody('你好') as unknown as Response);
+    const controller = new AbortController();
+    const { azureProvider } = await import('@/services/translators/providers/azure');
+    await azureProvider.translate(['Hello'], 'en', 'zh-CN', null, false, controller.signal);
+    expect(vi.mocked(tauriFetch).mock.calls[1]![1]?.signal).toBe(controller.signal);
+  });
+
   it('posts translations to the bing host that served the translator page', async () => {
     // From some networks (mainland China) www.bing.com answers a 302 to a
     // regional host for the page and for the translate POST alike. The client
@@ -1390,7 +1434,7 @@ describe('azureProvider', () => {
     );
   });
 
-  it('rejects an empty Google translation', async () => {
+  it('rejects an empty Bing translation instead of returning original text', async () => {
     mockProxyAuthAndTranslation('unused');
     mockFetch.mockReset();
     mockFetch
@@ -1408,8 +1452,7 @@ describe('azureProvider', () => {
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => [] });
 
     const { azureProvider } = await import('@/services/translators/providers/azure');
-    const result = await azureProvider.translate(['Hello'], 'en', 'fr', 'user-token');
-    expect(result).toEqual(['Hello']);
+    await expect(azureProvider.translate(['Hello'], 'en', 'fr', 'user-token')).rejects.toThrow(/malformed response/);
   });
 
   it('has correct provider metadata', async () => {

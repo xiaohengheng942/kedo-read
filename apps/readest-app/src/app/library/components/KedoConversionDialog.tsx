@@ -91,6 +91,8 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           const result = await retryTranslation(
             () => service.translate([text], 'en', 'zh-CN', null, false, signal),
             signal,
+            1200,
+            (attempt) => { if (requestId.current === id) setStatus(`翻译服务暂时不可用，正在等待重试（${attempt}/2）…`); },
           );
           if (!result[0]?.trim()) throw new Error('翻译服务返回空结果');
           assertChineseTranslation(text, result[0]);
@@ -212,6 +214,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
         onClose();
       }}
       title='转换或翻译书籍'
+      contentClassName='min-h-0'
     >
       <div className='flex flex-col gap-3 p-4'>
         <label htmlFor={fileInputId} className='btn btn-primary w-full cursor-pointer'>
@@ -284,7 +287,7 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
           <button className='btn' onClick={() => { const p = run(true); running.current = p; void p.finally(() => { if (running.current === p) running.current = null; }); }}>重新翻译整本书</button>
           <button className='btn' onClick={() => setSwitchDecision(false)}>返回</button>
         </div>}
-        <div className='flex flex-wrap gap-2'>
+        <div className='bg-base-100 sticky bottom-0 z-10 flex flex-wrap gap-2 py-2'>
           <button className='btn btn-primary' disabled={!file || busy || loadingTask || switchDecision || savedTask?.status === 'completed'} onClick={() => { const p = run(); running.current = p; void p.finally(() => { if (running.current === p) running.current = null; }); }}>
             {savedTask && savedTask.status !== 'completed' ? '继续任务' : '开始'}
           </button>

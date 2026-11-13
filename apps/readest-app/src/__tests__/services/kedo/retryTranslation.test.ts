@@ -20,3 +20,12 @@ it('does not retry after cancellation', async () => {
   await expect(retryTranslation(call, controller.signal, 0)).rejects.toThrow();
   expect(call).toHaveBeenCalledTimes(1);
 });
+
+it('retries transient malformed responses twice and stops on persistent failure', async () => {
+ const operation = vi.fn().mockRejectedValueOnce(new Error('bing translate failed: malformed response')).mockRejectedValueOnce(new Error('connection closed')).mockResolvedValueOnce('译文');
+ await expect(retryTranslation(operation, undefined, 0)).resolves.toBe('译文');
+ expect(operation).toHaveBeenCalledTimes(3);
+ const failing = vi.fn().mockRejectedValue(new Error('bing translate failed: malformed response'));
+ await expect(retryTranslation(failing, undefined, 0)).rejects.toThrow(/malformed/);
+ expect(failing).toHaveBeenCalledTimes(3);
+});

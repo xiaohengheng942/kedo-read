@@ -115,6 +115,30 @@ const requireWebToken = (token?: string | null) => {
   return token;
 };
 
+async function readBingAuth(response: Response): Promise<BingAuthParams> {
+  if (!response.body) return parseBingAuthParams(await response.text(), Date.now());
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let html = '';
+  try {
+    while (true) {
+      let part: ReadableStreamReadResult<Uint8Array>;
+      try { part = await reader.read(); }
+      catch { throw new Error('bing translate auth failed: network response interrupted'); }
+      if (part.done) break;
+      html += decoder.decode(part.value, { stream: true });
+      if (html.length > 2_000_000) throw new Error('bing translate auth failed: translator page too large');
+      try {
+        const auth = parseBingAuthParams(html, Date.now());
+        void reader.cancel().catch(() => {});
+        return auth;
+      } catch { /* fields may be in a later chunk */ }
+    }
+    html += decoder.decode();
+    return parseBingAuthParams(html, Date.now());
+  } finally { reader.releaseLock(); }
+}
+
 async function fetchAuthParams(token?: string | null): Promise<BingAuthParams> {
   if (isTauriAppPlatform()) {
     const response = await withRequestLimit(() =>
@@ -127,7 +151,7 @@ async function fetchAuthParams(token?: string | null): Promise<BingAuthParams> {
       throw new Error(`bing translate auth failed with status ${response.status}`);
     }
     translateUrl = translateUrlFor(response.url);
-    return parseBingAuthParams(await response.text(), Date.now());
+    return readBingAuth(response);
   }
 
   // The translator page is ~650KB of markup; the proxy parses it server-side
@@ -163,14 +187,30 @@ async function getAuthParams(token?: string | null): Promise<BingAuthParams> {
   return authPromise;
 }
 
+function waitForAuth(auth: Promise<BingAuthParams>, signal?: AbortSignal): Promise<BingAuthParams> {
+  if (!signal) return auth;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { signal.removeEventListener('abort', onAbort); reject(signal.reason); };
+    signal.addEventListener('abort', onAbort, { once: true });
+    auth.then(
+      value => { signal.removeEventListener('abort', onAbort); resolve(value); },
+      error => { signal.removeEventListener('abort', onAbort); reject(error); },
+    );
+    if (signal.aborted) onAbort();
+  });
+}
+
 async function translateChunk(
   chunk: string,
   fromLang: string,
   toLang: string,
   token?: string | null,
   retryAuth = true,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const auth = await getAuthParams(token);
+  signal?.throwIfAborted();
+  const auth = await waitForAuth(getAuthParams(token), signal);
+  signal?.throwIfAborted();
   const body = new URLSearchParams({
     fromLang,
     text: chunk,
@@ -186,6 +226,7 @@ async function translateChunk(
           method: 'POST',
           headers: BING_REQUEST_HEADERS,
           body: body.toString(),
+          signal,
         })
       : window.fetch(`${PROXY_URL}?endpoint=translate&${query}`, {
           method: 'POST',
@@ -194,6 +235,7 @@ async function translateChunk(
             Authorization: `Bearer ${requireWebToken(token)}`,
           },
           body: body.toString(),
+          signal,
         }),
   );
 
@@ -213,15 +255,16 @@ async function translateChunk(
       // Drop the params this attempt used so the retry scrapes a fresh page,
       // without discarding params another call may have just refreshed.
       if (cachedAuth?.token === auth.token) cachedAuth = null;
-      return translateChunk(chunk, fromLang, toLang, token, false);
+      return translateChunk(chunk, fromLang, toLang, token, false, signal);
     }
     throw new Error(`bing translate failed with status ${statusCode}`);
   }
 
   if (Array.isArray(data) && data.length > 0 && data[0]?.translations) {
-    return data[0].translations[0]?.text || chunk;
+    const text = data[0].translations[0]?.text;
+    if (typeof text === 'string' && text.trim()) return text;
   }
-  return chunk;
+  throw new Error('bing translate failed: malformed response');
 }
 
 export const azureProvider: TranslationProvider = {
@@ -239,6 +282,8 @@ export const azureProvider: TranslationProvider = {
     sourceLang: string,
     targetLang: string,
     token?: string | null,
+    _cache?: boolean,
+    signal?: AbortSignal,
   ): Promise<string[]> => {
     if (!text.length) return [];
     if (!isTauriAppPlatform()) requireWebToken(token);
@@ -265,7 +310,7 @@ export const azureProvider: TranslationProvider = {
         // go out as several chunks and are stitched back together.
         const translated = await Promise.all(
           splitTextIntoChunks(line, MAX_CHARS_PER_REQUEST).map((chunk) =>
-            translateChunk(chunk, fromLang, toLang, token),
+            translateChunk(chunk, fromLang, toLang, token, true, signal),
           ),
         );
         results[index] = translated.join('');

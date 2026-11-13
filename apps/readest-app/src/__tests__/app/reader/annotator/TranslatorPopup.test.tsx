@@ -106,7 +106,7 @@ describe('TranslatorPopup error reporting', () => {
     expect(
       await screen.findByText('Unable to fetch the translation. Try again later.'),
     ).toBeTruthy();
-    expect(screen.getByText('翻译服务返回错误，请检查服务配置或切换服务。')).toBeTruthy();
+    expect(screen.getByText('Bing 翻译服务返回状态 400，请求未完成；请稍后重试或切换服务。')).toBeTruthy();
   });
 
   it('does not ask a logged-out user to log in when the provider needs no login', async () => {
