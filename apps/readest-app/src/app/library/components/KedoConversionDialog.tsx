@@ -9,7 +9,7 @@ import { translateEpub } from '@/services/kedo/translateEpub';
 import { assertChineseTranslation, translationError } from '@/services/kedo/translationError';
 import { retryTranslation } from '@/services/kedo/retryTranslation';
 import { createIndexedTaskStore, createTask, runTask, type TranslationTask } from '@/services/kedo/resumableTask';
-import { exportTaskBackup, importTaskBackup } from '@/services/kedo/taskBackup';
+import { exportTaskBackup, importTaskBackup, mergeTaskBackup } from '@/services/kedo/taskBackup';
 import { createPartialEpub } from '@/services/kedo/partialEpub';
 
 type Props = { isOpen: boolean; onClose: () => void; onImport: (file: File) => Promise<void> };
@@ -266,17 +266,18 @@ export default function KedoConversionDialog({ isOpen, onClose, onImport }: Prop
         </label>
         <p>在线翻译会将书籍内容发送给所选服务，可能产生费用。可在设置中配置自定义翻译服务。</p>
         <p>翻译任务和已完成分段保存在本机；清理应用网页数据会删除任务。可导出任务备份到本机，备份包含书籍和译文，请妥善保管。任务云同步尚未提供。扫描页使用本机文字识别，复杂排版和图片可能丢失。</p>
-        {!savedTask && !busy && <><label htmlFor={backupInputId} className='btn'>恢复本机任务备份</label><input id={backupInputId} aria-label='恢复本机任务备份' className='sr-only focus:not-sr-only' type='file' accept='.json,application/json' onChange={(e) => {
+        {!busy && <><label htmlFor={backupInputId} className='btn'>{savedTask ? '合并同一本书的任务备份' : '恢复本机任务备份'}</label><input id={backupInputId} aria-label='恢复本机任务备份' className='sr-only focus:not-sr-only' type='file' accept='.json,application/json' onChange={(e) => {
           const selected = e.target.files?.[0];
           if (!selected) return;
           void selected.text().then(importTaskBackup).then(async (task) => {
-            if (await taskStore.current.read()) throw new Error('已有任务，请先处理该任务。');
-            await taskStore.current.write(task);
-            setSavedTask(task); setFile(new File([new Uint8Array(task.source).buffer], task.filename)); setProvider(task.provider);
-            if (task.mode) setMode(task.mode);
-            if (task.status === 'completed' && task.output) setOutput(new File([new Uint8Array(task.output).buffer], `${task.filename.replace(/\.(pdf|epub)$/i, '')}-Kedo.epub`, { type: 'application/epub+zip' }));
-            setStatus('任务备份已恢复到本机。');
-          }).catch(() => setStatus('无法恢复备份，请检查文件是否有效且本机没有其他任务。'));
+            const existing = await taskStore.current.read();
+            const restored = existing ? mergeTaskBackup(existing, task) : task;
+            await taskStore.current.write(restored);
+            setSavedTask(restored); setFile(new File([new Uint8Array(restored.source).buffer], restored.filename)); setProvider(restored.provider);
+            if (restored.mode) setMode(restored.mode);
+            if (restored.status === 'completed' && restored.output) setOutput(new File([new Uint8Array(restored.output).buffer], `${restored.filename.replace(/\.(pdf|epub)$/i, '')}-Kedo.epub`, { type: 'application/epub+zip' }));
+            setStatus(existing ? '同一本书的任务已安全合并。' : '任务备份已恢复到本机。');
+          }).catch((error: unknown) => setStatus(`无法恢复任务：${error instanceof Error ? error.message : '备份无效'}`));
           e.target.value = '';
         }} /></>}
         {savedTask && savedTask.status !== 'completed' && Object.keys(savedTask.segments).length > 0 && <p>可导出已完成的译文；未翻译处会标记缺失。此 EPUB 并非完整译本，导出后仍可继续任务。</p>}

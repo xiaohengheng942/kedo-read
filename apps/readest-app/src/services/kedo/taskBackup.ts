@@ -1,5 +1,13 @@
 import type { TranslationTask } from './resumableTask';
 
+export function mergeTaskBackup(current: TranslationTask, incoming: TranslationTask): TranslationTask {
+  if (current.status === 'completed' || incoming.status === 'completed' || current.filename !== incoming.filename || current.provider !== incoming.provider || current.mode !== incoming.mode || current.source.length !== incoming.source.length || !current.source.every((v, i) => v === incoming.source[i]) || current.pdfPages || incoming.pdfPages) throw new Error('任务的原书或设置不同，无法安全合并。');
+  for (const [key, value] of Object.entries(current.segments)) {
+    if (incoming.segments[Number(key)] !== undefined && incoming.segments[Number(key)] !== value) throw new Error('已有译文存在冲突，无法安全合并。');
+  }
+  return { ...current, segments: { ...current.segments, ...incoming.segments }, status: 'paused' };
+}
+
 export function exportTaskBackup(task: TranslationTask): string {
   return JSON.stringify({ format: 'kedo-task-1', task: { ...task, source: Array.from(task['source']), output: task['output'] && Array.from(task['output']) } });
 }
